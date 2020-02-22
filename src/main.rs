@@ -14,10 +14,24 @@ mod scheduler;
 use scheduler::*;
 
 async fn play_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyPlay) {
-    // register as latest event
-    let message = StateChangeMessage::new(0, action.channel, action.note, action.velocity);
     // Set up outbound transmition
     let mut tx = midi_tx.clone();
+
+    // Request mutex for subject note
+    let (mutex_request, mutex_response) = oneshot::channel();
+    tx.send(KeyStateChange::MutexRequest(MutexQuery::new(
+        mutex_request,
+        action.channel,
+        action.note,
+    )))
+    .await
+    .ok()
+    .unwrap();
+    let mutex = mutex_response.await.ok().unwrap();
+
+    // define message for use in play and stop requests
+    let message = StateChangeMessage::new(mutex, action.channel, action.note, action.velocity);
+
     // Delay until event start
     delay_until(action.at).await;
     // Wake up and submit play action
@@ -26,6 +40,28 @@ async fn play_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyPlay) {
     delay_until(action.at + Duration::from_millis(action.duration)).await;
     // Wake up and submit stop action
     tx.send(KeyStateChange::Stop(message)).await.ok().unwrap();
+}
+
+async fn cancel_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyCancel) {
+    // Set up outbound transmition
+    let mut tx = midi_tx.clone();
+
+    // Request mutex for subject note
+    let (mutex_request, mutex_response) = oneshot::channel();
+
+    // Delay until event start
+    delay_until(action.at).await;
+
+    // Send and await response of update
+    tx.send(KeyStateChange::MutexRequest(MutexQuery::new(
+        mutex_request,
+        action.channel,
+        action.note,
+    )))
+    .await
+    .ok()
+    .unwrap();
+    mutex_response.await.ok().unwrap();
 }
 
 async fn manage_midi_state(
@@ -39,12 +75,34 @@ async fn manage_midi_state(
     // Reactor
     while let Some(change_request) = event_rx.recv().await {
         let try_state_change = match change_request {
-            KeyStateChange::Play(play) => midi_state.channels[play.channel as usize]
-                [play.note as usize]
-                .play(play.id, play.note, play.velocity),
-            KeyStateChange::Stop(stop) => midi_state.channels[stop.channel as usize]
-                [stop.note as usize]
-                .stop(stop.id, stop.note, stop.velocity),
+            KeyStateChange::Play(play) => midi_state.key_state(play.channel, play.note).play(
+                play.id,
+                play.note,
+                play.velocity,
+            ),
+            KeyStateChange::Stop(stop) => midi_state.key_state(stop.channel, stop.note).stop(
+                stop.id,
+                stop.note,
+                stop.velocity,
+            ),
+            KeyStateChange::MutexRequest(request) => {
+                request
+                    .reply
+                    .send(midi_state.key_state(request.channel, request.note).mutex())
+                    .unwrap();
+                None
+            }
+            KeyStateChange::MutexUpdate(request) => {
+                request
+                    .reply
+                    .send(
+                        midi_state
+                            .key_state(request.channel, request.note)
+                            .update_mutex(),
+                    )
+                    .unwrap();
+                None
+            }
             KeyStateChange::Close => break,
         };
 
@@ -160,6 +218,24 @@ async fn main() {
         play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)),
         play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80))
     );
+
+    // Async test chord
+    let midi_state_tx_moved = midi_state_tx.clone();
+    tokio::spawn(async move {
+        play_note(
+            &midi_state_tx_moved,
+            KeyPlay::new(Instant::now(), 600, 1, 60, 80),
+        )
+        .await;
+        play_note(
+            &midi_state_tx_moved,
+            KeyPlay::new(Instant::now(), 600, 1, 60, 80),
+        )
+        .await;
+    });
+
+    play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)).await;
+    play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80)).await;
 
     midi_state_tx
         .send(KeyStateChange::Close)

@@ -1,61 +1,8 @@
-use tokio::sync::mpsc;
-use tokio::time::{delay_queue, DelayQueue, Duration, Error, Instant};
-
-use std::collections::HashMap;
-use std::task::{Context, Poll};
-
-use futures::ready;
+use tokio::sync::oneshot;
+use tokio::time::Instant;
 
 pub mod types;
 pub use types::*;
-
-pub struct Scheduler {
-    entries: HashMap<String, (MidiEvent, delay_queue::Key)>,
-    expirations: DelayQueue<String>,
-    midi_tx: mpsc::Sender<MidiEvent>,
-}
-
-const TTL_SECS: u64 = 30;
-
-impl Scheduler {
-    pub fn new(tx: &mpsc::Sender<MidiEvent>) -> Scheduler {
-        Scheduler {
-            entries: HashMap::new(),
-            expirations: DelayQueue::new(),
-            midi_tx: tx.clone(),
-        }
-    }
-
-    fn insert(&mut self, key: String, value: MidiEvent) {
-        let delay = self
-            .expirations
-            .insert(key.clone(), Duration::from_secs(TTL_SECS));
-
-        self.entries.insert(key, (value, delay));
-    }
-
-    fn get(&self, key: &String) -> Option<&MidiEvent> {
-        self.entries.get(key).map(|&(ref v, _)| v)
-    }
-
-    fn remove(&mut self, key: &String) {
-        if let Some((_, cache_key)) = self.entries.remove(key) {
-            self.expirations.remove(&cache_key);
-        }
-    }
-
-    async fn poll_purge(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        while let Some(res) = ready!(self.expirations.poll_expired(context)) {
-            let entry = res?;
-            match self.entries.remove(entry.get_ref()) {
-                Some((event, _)) => self.midi_tx.send(event).await.ok().unwrap(),
-                None => (),
-            }
-        }
-
-        Poll::Ready(Ok(()))
-    }
-}
 
 #[derive(Debug, Copy, Clone)]
 pub struct KeyState {
@@ -71,8 +18,12 @@ impl KeyState {
         }
     }
 
-    pub fn register_event_id(&mut self) -> u32 {
+    pub fn update_mutex(&mut self) -> u32 {
         self.event_counter += 1;
+        self.event_counter
+    }
+
+    pub fn mutex(&mut self) -> u32 {
         self.event_counter
     }
 
@@ -108,6 +59,10 @@ impl KeyStateStore {
         KeyStateStore {
             channels: [[KeyState::new(); 127]; 16],
         }
+    }
+
+    pub fn key_state(&mut self, channel: u8, note: u8) -> &mut KeyState {
+        &mut self.channels[channel as usize][note as usize]
     }
 }
 
@@ -165,8 +120,26 @@ impl StateChangeMessage {
     }
 }
 
+pub struct MutexQuery {
+    pub reply: oneshot::Sender<u32>,
+    pub channel: u8,
+    pub note: u8,
+}
+
+impl MutexQuery {
+    pub fn new(reply: oneshot::Sender<u32>, channel: u8, note: u8) -> MutexQuery {
+        MutexQuery {
+            reply: reply,
+            channel: channel,
+            note: note,
+        }
+    }
+}
+
 pub enum KeyStateChange {
     Play(StateChangeMessage),
     Stop(StateChangeMessage),
+    MutexRequest(MutexQuery),
+    MutexUpdate(MutexQuery),
     Close,
 }
