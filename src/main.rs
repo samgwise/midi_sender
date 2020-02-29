@@ -7,6 +7,11 @@ use tokio::join;
 extern crate midir;
 use midir::MidiOutput;
 
+// OSC Interface
+use rosc::OscPacket;
+use std::net::{SocketAddrV4, UdpSocket};
+use std::str::FromStr;
+
 // Used for midi config interactive prompts
 use std::io::{stdin, stdout, Write};
 
@@ -62,6 +67,19 @@ async fn cancel_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyCancel) 
     .ok()
     .unwrap();
     mutex_response.await.ok().unwrap();
+}
+
+// Routings for OSC packet
+fn route_packet(packet: OscPacket) {
+    match packet {
+        OscPacket::Message(msg) => {
+            println!("OSC address: {}", msg.addr);
+            println!("OSC arguments: {:?}", msg.args);
+        }
+        OscPacket::Bundle(bundle) => {
+            println!("OSC Bundle: {:?}", bundle);
+        }
+    }
 }
 
 async fn manage_midi_state(
@@ -237,6 +255,28 @@ async fn main() {
     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)).await;
     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80)).await;
 
+    //
+    // Test OSC service
+    //
+    let address = SocketAddrV4::from_str("127.0.0.1:10009").unwrap();
+    let socket = UdpSocket::bind(address).unwrap();
+
+    let mut in_buffer = [0u8; rosc::decoder::MTU];
+
+    println!("Listening for OSC messages on: {:?}", address);
+    loop {
+        match socket.recv_from(&mut in_buffer) {
+            Ok((size, from_address)) => {
+                let packet = rosc::decoder::decode(&in_buffer[..size]).unwrap();
+                route_packet(packet);
+            }
+            Err(e) => {
+                println!("Error receiving OSC message from socket: {}", e);
+            }
+        }
+    }
+
+    // End midi state management
     midi_state_tx
         .send(KeyStateChange::Close)
         .await
@@ -244,6 +284,7 @@ async fn main() {
         .unwrap();
     state_change_reactor.await.ok().unwrap();
 
+    // Release midi port
     midi_tx.send(MidiEvent::Close).await.ok().unwrap();
     message_hanlder.await.ok().unwrap();
 

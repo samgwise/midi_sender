@@ -10,3 +10,4 @@ edition = "2018"
 tokio = { version = "0.2", features = ["full"] }
 futures = "0.3"
 midir = "0.5"
+rosc = "~0.3"
