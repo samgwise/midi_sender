@@ -19,7 +19,7 @@ mod scheduler;
 use scheduler::*;
 
 async fn play_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyPlay) {
-    // Set up outbound transmition
+    // Set up outbound transmission
     let mut tx = midi_tx.clone();
 
     // Request mutex for subject note
@@ -48,7 +48,7 @@ async fn play_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyPlay) {
 }
 
 async fn cancel_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyCancel) {
-    // Set up outbound transmition
+    // Set up outbound transmission
     let mut tx = midi_tx.clone();
 
     // Request mutex for subject note
@@ -69,18 +69,10 @@ async fn cancel_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyCancel) 
     mutex_response.await.ok().unwrap();
 }
 
-fn arg_as_i32(argument: rosc::OscType) -> Option<i32> {
-    match argument {
-        rosc::OscType::Int(value) => Some(value),
-        default => None,
-    }
-}
-
-fn arg_as_i64(argument: rosc::OscType) -> Option<i64> {
-    match argument {
-        rosc::OscType::Long(value) => Some(value),
-        default => None,
-    }
+// Float to instant suitable for use in an at scheduler
+fn seconds_to_instant(seconds: f64) -> Instant {
+    let now = Instant::now();
+    now + Duration::from_secs_f64(seconds)
 }
 
 // Routings for OSC packet
@@ -101,37 +93,42 @@ fn route_message(message: &mut rosc::OscMessage, midi_tx: &mpsc::Sender<KeyState
     if message.addr == "/midi_sender/play" {
         // Move arguments into the struct
         let mut args = message.args.drain(0..);
-        // let at = message.args[0].long; # Should be a duration from epoch but need to check the std::time docs first
-        let at = tokio::time::Instant::now();
-        let duration = args.nth(1).expect("Missing 1st argument.").long().unwrap() as u32;
-        let channel = args.nth(0).expect("Missing 2nd argument.").int().unwrap() as u8;
-        let note = args.nth(0).expect("Missing 3rd argument.").int().unwrap() as u8;
-        let velocity = args.nth(0).expect("Missing 4th argument.").int().unwrap() as u8;
+        let at = seconds_to_instant(
+            args.nth(0)
+                .expect("Missing 1st argument.")
+                .double()
+                .unwrap(),
+        );
+        let duration = args.nth(0).expect("Missing 2nd argument.").long().unwrap() as u32;
+        let channel = args.nth(0).expect("Missing 3rd argument.").int().unwrap() as u8;
+        let note = args.nth(0).expect("Missing 4th argument.").int().unwrap() as u8;
+        let velocity = args.nth(0).expect("Missing 5th argument.").int().unwrap() as u8;
 
         let event = KeyPlay::new(at, duration as u64, channel, note, velocity);
-        let midi_tx_movavble = midi_tx.clone();
+        let midi_tx_movable = midi_tx.clone();
         tokio::spawn(async move {
-            play_note(&midi_tx_movavble, event).await;
+            play_note(&midi_tx_movable, event).await;
         });
-    }
-    else if message.addr == "/midi_sender/cancel" {
+    } else if message.addr == "/midi_sender/cancel" {
         // Move arguments into the struct
         let mut args = message.args.drain(0..);
-        // let at = message.args[0].long;
-        let at = tokio::time::Instant::now();
-        let channel = args.nth(1).expect("Missing 1st argument.").char().unwrap() as u8;
-        let note = args.nth(2).expect("Missing 2nd argument.").char().unwrap() as u8;
+        let at = seconds_to_instant(
+            args.nth(0)
+                .expect("Missing 1st argument.")
+                .double()
+                .unwrap(),
+        );
+        let channel = args.nth(1).expect("Missing 2nd argument.").int().unwrap() as u8;
+        let note = args.nth(0).expect("Missing 3rd argument.").int().unwrap() as u8;
 
         let event = KeyCancel::new(at, channel, note);
-        let midi_tx_movavble = midi_tx.clone();
+        let midi_tx_movable = midi_tx.clone();
         tokio::spawn(async move {
-            cancel_note(&midi_tx_movavble, event).await;
+            cancel_note(&midi_tx_movable, event).await;
         });
-    }
-    else if message.addr == "/midi_sender/augment" {
-        println!("Augment action is yet to be implimented");
-    }
-    else {
+    } else if message.addr == "/midi_sender/augment" {
+        println!("Augment action is yet to be implemented");
+    } else {
         println!("No behaviour defined for OSC path '{}'", message.addr);
     }
 }
@@ -238,7 +235,7 @@ async fn main() {
 
     // Handle multiple async inputs to midi output
     let (mut midi_tx, mut midi_rx) = mpsc::channel(100);
-    let message_hanlder = tokio::spawn(async move {
+    let message_handler = tokio::spawn(async move {
         messages_to_midi_out(&mut conn_out, &mut midi_rx).await;
         conn_out.close();
     });
@@ -341,7 +338,7 @@ async fn main() {
 
     // Release midi port
     midi_tx.send(MidiEvent::Close).await.ok().unwrap();
-    message_hanlder.await.ok().unwrap();
+    message_handler.await.ok().unwrap();
 
     println!("Connection closed");
 }

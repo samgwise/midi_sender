@@ -33,7 +33,9 @@ $server.send: '/hello/not-really';
 try $server.send: '/hello', :args('out there', ), :address<192.168.1.1>, :port(54321);
 
 given $server {
-    .send: '/midi_sender/play', :args(osc-double(now.Rat), osc-int64(500), 1, 60, 60)
+    .send: '/midi_sender/play', :args(osc-double(0.0), osc-int64(500), 1, 60, 60);
+    .send: '/midi_sender/play', :args(osc-double(1.0), osc-int64(500), 1, 60, 60);
+    .send: '/midi_sender/play', :args(osc-double(2.0), osc-int64(500), 1, 60, 60)
 }
 
 #Allow some time for our messages to arrive
