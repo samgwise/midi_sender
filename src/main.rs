@@ -1,5 +1,5 @@
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{delay_for, delay_until, Duration, Instant};
+use tokio::time::{delay_until, Duration, Instant};
 
 use tokio::join;
 
@@ -69,16 +69,70 @@ async fn cancel_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyCancel) 
     mutex_response.await.ok().unwrap();
 }
 
+fn arg_as_i32(argument: rosc::OscType) -> Option<i32> {
+    match argument {
+        rosc::OscType::Int(value) => Some(value),
+        default => None,
+    }
+}
+
+fn arg_as_i64(argument: rosc::OscType) -> Option<i64> {
+    match argument {
+        rosc::OscType::Long(value) => Some(value),
+        default => None,
+    }
+}
+
 // Routings for OSC packet
-fn route_packet(packet: OscPacket) {
+fn route_packet(packet: OscPacket, midi_tx: &mpsc::Sender<KeyStateChange>) {
     match packet {
-        OscPacket::Message(msg) => {
+        OscPacket::Message(mut msg) => {
             println!("OSC address: {}", msg.addr);
             println!("OSC arguments: {:?}", msg.args);
+            route_message(&mut msg, midi_tx)
         }
         OscPacket::Bundle(bundle) => {
             println!("OSC Bundle: {:?}", bundle);
         }
+    }
+}
+
+fn route_message(message: &mut rosc::OscMessage, midi_tx: &mpsc::Sender<KeyStateChange>) {
+    if message.addr == "/midi_sender/play" {
+        // Move arguments into the struct
+        let mut args = message.args.drain(0..);
+        // let at = message.args[0].long; # Should be a duration from epoch but need to check the std::time docs first
+        let at = tokio::time::Instant::now();
+        let duration = args.nth(1).expect("Missing 1st argument.").long().unwrap() as u32;
+        let channel = args.nth(0).expect("Missing 2nd argument.").int().unwrap() as u8;
+        let note = args.nth(0).expect("Missing 3rd argument.").int().unwrap() as u8;
+        let velocity = args.nth(0).expect("Missing 4th argument.").int().unwrap() as u8;
+
+        let event = KeyPlay::new(at, duration as u64, channel, note, velocity);
+        let midi_tx_movavble = midi_tx.clone();
+        tokio::spawn(async move {
+            play_note(&midi_tx_movavble, event).await;
+        });
+    }
+    else if message.addr == "/midi_sender/cancel" {
+        // Move arguments into the struct
+        let mut args = message.args.drain(0..);
+        // let at = message.args[0].long;
+        let at = tokio::time::Instant::now();
+        let channel = args.nth(1).expect("Missing 1st argument.").char().unwrap() as u8;
+        let note = args.nth(2).expect("Missing 2nd argument.").char().unwrap() as u8;
+
+        let event = KeyCancel::new(at, channel, note);
+        let midi_tx_movavble = midi_tx.clone();
+        tokio::spawn(async move {
+            cancel_note(&midi_tx_movavble, event).await;
+        });
+    }
+    else if message.addr == "/midi_sender/augment" {
+        println!("Augment action is yet to be implimented");
+    }
+    else {
+        println!("No behaviour defined for OSC path '{}'", message.addr);
     }
 }
 
@@ -266,12 +320,13 @@ async fn main() {
     println!("Listening for OSC messages on: {:?}", address);
     loop {
         match socket.recv_from(&mut in_buffer) {
-            Ok((size, from_address)) => {
+            Ok((size, _from_address)) => {
                 let packet = rosc::decoder::decode(&in_buffer[..size]).unwrap();
-                route_packet(packet);
+                route_packet(packet, &midi_state_tx);
             }
             Err(e) => {
                 println!("Error receiving OSC message from socket: {}", e);
+                break;
             }
         }
     }

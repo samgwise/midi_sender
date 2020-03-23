@@ -92,6 +92,16 @@ pub struct KeyCancel {
     pub note: u8,
 }
 
+impl KeyCancel {
+    pub fn new(at: Instant, channel: u8, note: u8, ) -> KeyCancel {
+        KeyCancel {
+            at: at,
+            channel: channel,
+            note: note,
+        }
+    }
+}
+
 // Remote interface
 pub enum KeyEvent {
     Play(KeyPlay),
