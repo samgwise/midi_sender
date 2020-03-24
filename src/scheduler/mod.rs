@@ -1,71 +1,10 @@
-use tokio::sync::oneshot;
-use tokio::time::Instant;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::{delay_until, Duration, Instant};
 
 pub mod types;
 pub use types::*;
 
-#[derive(Debug, Copy, Clone)]
-pub struct KeyState {
-    event_counter: u32,
-    key_on: bool,
-}
-
-impl KeyState {
-    pub fn new() -> KeyState {
-        KeyState {
-            event_counter: 0,
-            key_on: false,
-        }
-    }
-
-    pub fn update_mutex(&mut self) -> u32 {
-        self.event_counter += 1;
-        self.event_counter
-    }
-
-    pub fn mutex(&mut self) -> u32 {
-        self.event_counter
-    }
-
-    pub fn compare_event_id(&mut self, id: u32) -> bool {
-        self.event_counter == id
-    }
-
-    pub fn play(&mut self, id: u32, note: u8, velocity: u8) -> Option<MidiEvent> {
-        if self.compare_event_id(id) && !self.key_on {
-            self.key_on = true;
-            Some(MidiEvent::Raw([NOTE_ON_MSG, note, velocity]))
-        } else {
-            None
-        }
-    }
-
-    pub fn stop(&mut self, id: u32, note: u8, velocity: u8) -> Option<MidiEvent> {
-        if self.compare_event_id(id) && self.key_on {
-            self.key_on = false;
-            Some(MidiEvent::Raw([NOTE_OFF_MSG, note, velocity]))
-        } else {
-            None
-        }
-    }
-}
-
-pub struct KeyStateStore {
-    pub channels: [[KeyState; 127]; 16],
-}
-
-impl KeyStateStore {
-    pub fn new() -> KeyStateStore {
-        KeyStateStore {
-            channels: [[KeyState::new(); 127]; 16],
-        }
-    }
-
-    pub fn key_state(&mut self, channel: u8, note: u8) -> &mut KeyState {
-        &mut self.channels[channel as usize][note as usize]
-    }
-}
-
+// Interface play event for scheduler
 pub struct KeyPlay {
     pub at: Instant,
     pub duration: u64,
@@ -86,6 +25,7 @@ impl KeyPlay {
     }
 }
 
+// Interface cancel event for scheduler
 pub struct KeyCancel {
     pub at: Instant,
     pub channel: u8,
@@ -93,7 +33,7 @@ pub struct KeyCancel {
 }
 
 impl KeyCancel {
-    pub fn new(at: Instant, channel: u8, note: u8, ) -> KeyCancel {
+    pub fn new(at: Instant, channel: u8, note: u8) -> KeyCancel {
         KeyCancel {
             at: at,
             channel: channel,
@@ -152,4 +92,55 @@ pub enum KeyStateChange {
     MutexRequest(MutexQuery),
     MutexUpdate(MutexQuery),
     Close,
+}
+
+pub async fn play_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyPlay) {
+    // Set up outbound transmission
+    let mut tx = midi_tx.clone();
+
+    // Request mutex for subject note
+    let (mutex_request, mutex_response) = oneshot::channel();
+    tx.send(KeyStateChange::MutexRequest(MutexQuery::new(
+        mutex_request,
+        action.channel,
+        action.note,
+    )))
+    .await
+    .ok()
+    .unwrap();
+    let mutex = mutex_response.await.ok().unwrap();
+
+    // define message for use in play and stop requests
+    let message = StateChangeMessage::new(mutex, action.channel, action.note, action.velocity);
+
+    // Delay until event start
+    delay_until(action.at).await;
+    // Wake up and submit play action
+    tx.send(KeyStateChange::Play(message)).await.ok().unwrap();
+    // delay until end of duration
+    delay_until(action.at + Duration::from_millis(action.duration)).await;
+    // Wake up and submit stop action
+    tx.send(KeyStateChange::Stop(message)).await.ok().unwrap();
+}
+
+pub async fn cancel_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyCancel) {
+    // Set up outbound transmission
+    let mut tx = midi_tx.clone();
+
+    // Request mutex for subject note
+    let (mutex_request, mutex_response) = oneshot::channel();
+
+    // Delay until event start
+    delay_until(action.at).await;
+
+    // Send and await response of update
+    tx.send(KeyStateChange::MutexRequest(MutexQuery::new(
+        mutex_request,
+        action.channel,
+        action.note,
+    )))
+    .await
+    .ok()
+    .unwrap();
+    mutex_response.await.ok().unwrap();
 }

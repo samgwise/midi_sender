@@ -1,7 +1,7 @@
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::{delay_until, Duration, Instant};
+use tokio::sync::mpsc;
+use tokio::time::{Duration, Instant};
 
-use tokio::join;
+// use tokio::join;
 
 // Midi IO
 extern crate midir;
@@ -17,57 +17,6 @@ use std::io::{stdin, stdout, Write};
 
 mod scheduler;
 use scheduler::*;
-
-async fn play_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyPlay) {
-    // Set up outbound transmission
-    let mut tx = midi_tx.clone();
-
-    // Request mutex for subject note
-    let (mutex_request, mutex_response) = oneshot::channel();
-    tx.send(KeyStateChange::MutexRequest(MutexQuery::new(
-        mutex_request,
-        action.channel,
-        action.note,
-    )))
-    .await
-    .ok()
-    .unwrap();
-    let mutex = mutex_response.await.ok().unwrap();
-
-    // define message for use in play and stop requests
-    let message = StateChangeMessage::new(mutex, action.channel, action.note, action.velocity);
-
-    // Delay until event start
-    delay_until(action.at).await;
-    // Wake up and submit play action
-    tx.send(KeyStateChange::Play(message)).await.ok().unwrap();
-    // delay until end of duration
-    delay_until(action.at + Duration::from_millis(action.duration)).await;
-    // Wake up and submit stop action
-    tx.send(KeyStateChange::Stop(message)).await.ok().unwrap();
-}
-
-async fn cancel_note(midi_tx: &mpsc::Sender<KeyStateChange>, action: KeyCancel) {
-    // Set up outbound transmission
-    let mut tx = midi_tx.clone();
-
-    // Request mutex for subject note
-    let (mutex_request, mutex_response) = oneshot::channel();
-
-    // Delay until event start
-    delay_until(action.at).await;
-
-    // Send and await response of update
-    tx.send(KeyStateChange::MutexRequest(MutexQuery::new(
-        mutex_request,
-        action.channel,
-        action.note,
-    )))
-    .await
-    .ok()
-    .unwrap();
-    mutex_response.await.ok().unwrap();
-}
 
 // Float to instant suitable for use in an at scheduler
 fn seconds_to_instant(seconds: f64) -> Instant {
@@ -247,64 +196,64 @@ async fn main() {
         manage_midi_state(&mut midi_state_rx, &mut state_change_out_tx).await
     });
 
-    // Play out tests
+    // // Play out tests
 
-    // Broken chord
-    play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 60, 80)).await;
-    play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)).await;
-    play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80)).await;
+    // // Broken chord
+    // play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 60, 80)).await;
+    // play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)).await;
+    // play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80)).await;
 
-    // Alternative Broken chord
-    join!(
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 300, 1, 72, 80)),
-        play_note(
-            &midi_state_tx,
-            KeyPlay::new(Instant::now() + Duration::from_millis(600), 300, 1, 67, 80)
-        ),
-        play_note(
-            &midi_state_tx,
-            KeyPlay::new(Instant::now() + Duration::from_millis(1200), 600, 1, 64, 80)
-        )
-    );
+    // // Alternative Broken chord
+    // join!(
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 300, 1, 72, 80)),
+    //     play_note(
+    //         &midi_state_tx,
+    //         KeyPlay::new(Instant::now() + Duration::from_millis(600), 300, 1, 67, 80)
+    //     ),
+    //     play_note(
+    //         &midi_state_tx,
+    //         KeyPlay::new(Instant::now() + Duration::from_millis(1200), 600, 1, 64, 80)
+    //     )
+    // );
 
-    // Chord
-    join!(
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 60, 80)),
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)),
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80))
-    );
+    // // Chord
+    // join!(
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 60, 80)),
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)),
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80))
+    // );
 
-    // Chord
-    join!(
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 59, 80)),
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 65, 80)),
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80))
-    );
+    // // Chord
+    // join!(
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 59, 80)),
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 65, 80)),
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80))
+    // );
 
-    // Chord
-    join!(
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 60, 80)),
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)),
-        play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80))
-    );
+    // // Chord
+    // join!(
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 60, 80)),
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)),
+    //     play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80))
+    // );
 
-    // Async test chord
-    let midi_state_tx_moved = midi_state_tx.clone();
-    tokio::spawn(async move {
-        play_note(
-            &midi_state_tx_moved,
-            KeyPlay::new(Instant::now(), 600, 1, 60, 80),
-        )
-        .await;
-        play_note(
-            &midi_state_tx_moved,
-            KeyPlay::new(Instant::now(), 600, 1, 60, 80),
-        )
-        .await;
-    });
+    // // Async test chord
+    // let midi_state_tx_moved = midi_state_tx.clone();
+    // tokio::spawn(async move {
+    //     play_note(
+    //         &midi_state_tx_moved,
+    //         KeyPlay::new(Instant::now(), 600, 1, 60, 80),
+    //     )
+    //     .await;
+    //     play_note(
+    //         &midi_state_tx_moved,
+    //         KeyPlay::new(Instant::now(), 600, 1, 60, 80),
+    //     )
+    //     .await;
+    // });
 
-    play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)).await;
-    play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80)).await;
+    // play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 64, 80)).await;
+    // play_note(&midi_state_tx, KeyPlay::new(Instant::now(), 600, 1, 67, 80)).await;
 
     //
     // Test OSC service
