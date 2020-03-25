@@ -18,6 +18,10 @@ use std::io::{stdin, stdout, Write};
 mod scheduler;
 use scheduler::*;
 
+// Configuration utilities
+mod config;
+use config::*;
+
 // Float to instant suitable for use in an at scheduler
 fn seconds_to_instant(seconds: f64) -> Instant {
     let now = Instant::now();
@@ -151,6 +155,18 @@ async fn messages_to_midi_out(
 
 #[tokio::main]
 async fn main() {
+    // Read configuration
+    let config_path = "./midi_sender.toml";
+    let config = match slurp(config_path.to_string())
+        .and_then(|config_toml| config_from_toml(config_toml))
+    {
+        Ok(config) => config,
+        Err(error) => {
+            println!("Unable to open configuration: '{}' with error: {}. Using default configuration:\n{}", config_path, error, default_config_toml());
+            default_config()
+        }
+    };
+
     // let cache_test: Cache<MidiEvent> = Cache::new();
     // Set up midi IO
     let midi_out = MidiOutput::new("My Test Output").unwrap();
@@ -170,11 +186,17 @@ async fn main() {
             for i in 0..midi_out.port_count() {
                 println!("{}: {}", i, midi_out.port_name(i).unwrap());
             }
-            print!("Please select output port: ");
-            stdout().flush().unwrap();
-            let mut input = String::new();
-            stdin().read_line(&mut input).unwrap();
-            input.trim().parse().unwrap()
+
+            match config.midi_port {
+                Some(port) => port,
+                None => {
+                    print!("No port defined. Please select output port: ");
+                    stdout().flush().unwrap();
+                    let mut input = String::new();
+                    stdin().read_line(&mut input).unwrap();
+                    input.trim().parse().unwrap()
+                }
+            }
         }
     };
 
@@ -258,7 +280,7 @@ async fn main() {
     //
     // Test OSC service
     //
-    let address = SocketAddrV4::from_str("127.0.0.1:10009").unwrap();
+    let address = SocketAddrV4::from_str(&config.listen_address).unwrap();
     let socket = UdpSocket::bind(address).unwrap();
 
     let mut in_buffer = [0u8; rosc::decoder::MTU];
