@@ -35,19 +35,27 @@ impl KeyState {
         self.event_counter == id
     }
 
-    pub fn play(&mut self, id: u32, note: u8, velocity: u8) -> Option<MidiEvent> {
+    pub fn play(&mut self, id: u32, channel: u8, note: u8, velocity: u8) -> Option<MidiEvent> {
         if self.compare_event_id(id) && !self.key_on {
             self.key_on = true;
-            Some(MidiEvent::Raw([NOTE_ON_MSG, note, velocity]))
+            Some(MidiEvent::Raw([
+                NOTE_ON_MSG | (channel - 1),
+                note,
+                velocity,
+            ]))
         } else {
             None
         }
     }
 
-    pub fn stop(&mut self, id: u32, note: u8, velocity: u8) -> Option<MidiEvent> {
+    pub fn stop(&mut self, id: u32, channel: u8, note: u8, velocity: u8) -> Option<MidiEvent> {
         if self.compare_event_id(id) && self.key_on {
             self.key_on = false;
-            Some(MidiEvent::Raw([NOTE_OFF_MSG, note, velocity]))
+            Some(MidiEvent::Raw([
+                NOTE_OFF_MSG | (channel - 1),
+                note,
+                velocity,
+            ]))
         } else {
             None
         }

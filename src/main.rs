@@ -24,8 +24,11 @@ use config::*;
 
 // Float to instant suitable for use in an at scheduler
 fn seconds_to_instant(seconds: f64) -> Instant {
-    let now = Instant::now();
-    now + Duration::from_secs_f64(seconds)
+    if seconds.is_normal() && seconds > 0.0 {
+        Instant::now() + Duration::from_secs_f64(seconds)
+    } else {
+        Instant::now()
+    }
 }
 
 // Routings for OSC packet
@@ -99,11 +102,13 @@ async fn manage_midi_state(
         let try_state_change = match change_request {
             KeyStateChange::Play(play) => midi_state.key_state(play.channel, play.note).play(
                 play.id,
+                play.channel,
                 play.note,
                 play.velocity,
             ),
             KeyStateChange::Stop(stop) => midi_state.key_state(stop.channel, stop.note).stop(
                 stop.id,
+                stop.channel,
                 stop.note,
                 stop.velocity,
             ),
