@@ -49,18 +49,19 @@ fn route_message(message: &mut rosc::OscMessage, midi_tx: &mpsc::Sender<KeyState
     if message.addr == "/midi_sender/play" {
         // Move arguments into the struct
         let mut args = message.args.drain(0..);
-        let at = seconds_to_instant(
-            args.nth(0)
-                .expect("Missing 1st argument.")
-                .double()
-                .unwrap(),
-        );
-        let duration = args.nth(0).expect("Missing 2nd argument.").long().unwrap() as u32;
+        // let at = seconds_to_instant(
+        //     args.nth(0)
+        //         .expect("Missing 1st argument.")
+        //         .double()
+        //         .unwrap(),
+        // );
+        let at = args.nth(0).expect("Missing 1st argument.").long().unwrap();
+        let duration = args.nth(0).expect("Missing 2nd argument.").long().unwrap();
         let channel = args.nth(0).expect("Missing 3rd argument.").int().unwrap() as u8;
         let note = args.nth(0).expect("Missing 4th argument.").int().unwrap() as u8;
         let velocity = args.nth(0).expect("Missing 5th argument.").int().unwrap() as u8;
 
-        let event = KeyPlay::new(at, duration as u64, channel, note, velocity);
+        let event = KeyPlay::new(at as u64, duration as u64, channel, note, velocity);
         let midi_tx_movable = midi_tx.clone();
         tokio::spawn(async move {
             play_note(&midi_tx_movable, event).await;
@@ -68,22 +69,33 @@ fn route_message(message: &mut rosc::OscMessage, midi_tx: &mpsc::Sender<KeyState
     } else if message.addr == "/midi_sender/cancel" {
         // Move arguments into the struct
         let mut args = message.args.drain(0..);
-        let at = seconds_to_instant(
-            args.nth(0)
-                .expect("Missing 1st argument.")
-                .double()
-                .unwrap(),
-        );
+        // let at = seconds_to_instant(
+        //     args.nth(0)
+        //         .expect("Missing 1st argument.")
+        //         .double()
+        //         .unwrap(),
+        // );
+        let at = args.nth(0).expect("Missing 1st argument.").long().unwrap();
         let channel = args.nth(1).expect("Missing 2nd argument.").int().unwrap() as u8;
         let note = args.nth(0).expect("Missing 3rd argument.").int().unwrap() as u8;
 
-        let event = KeyCancel::new(at, channel, note);
+        let event = KeyCancel::new(at as u64, channel, note);
         let midi_tx_movable = midi_tx.clone();
         tokio::spawn(async move {
             cancel_note(&midi_tx_movable, event).await;
         });
     } else if message.addr == "/midi_sender/augment" {
         println!("Augment action is yet to be implemented");
+    } else if message.addr == "/midi_sender/sync" {
+        println!("Sync action triggered");
+        let mut midi_tx_movable = midi_tx.clone();
+        tokio::spawn(async move {
+            midi_tx_movable
+                .send(KeyStateChange::SyncUpdate)
+                .await
+                .ok()
+                .unwrap();
+        });
     } else {
         println!("No behaviour defined for OSC path '{}'", message.addr);
     }
@@ -115,19 +127,27 @@ async fn manage_midi_state(
             KeyStateChange::MutexRequest(request) => {
                 request
                     .reply
-                    .send(midi_state.key_state(request.channel, request.note).mutex())
+                    .send(MutexMessage::new(
+                        midi_state.key_state(request.channel, request.note).mutex(),
+                        midi_state.sync,
+                    ))
                     .unwrap();
                 None
             }
             KeyStateChange::MutexUpdate(request) => {
                 request
                     .reply
-                    .send(
+                    .send(MutexMessage::new(
                         midi_state
                             .key_state(request.channel, request.note)
                             .update_mutex(),
-                    )
+                        midi_state.sync,
+                    ))
                     .unwrap();
+                None
+            }
+            KeyStateChange::SyncUpdate => {
+                midi_state.set_sync();
                 None
             }
             KeyStateChange::Close => break,

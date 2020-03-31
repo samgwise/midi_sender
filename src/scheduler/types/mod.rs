@@ -1,3 +1,5 @@
+use tokio::time::Instant;
+
 pub const NOTE_ON_MSG: u8 = 0x90;
 pub const NOTE_OFF_MSG: u8 = 0x80;
 
@@ -62,19 +64,40 @@ impl KeyState {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct MutexMessage {
+    pub mutex: u32,
+    pub sync: Instant,
+}
+
+impl MutexMessage {
+    pub fn new(mutex: u32, sync: Instant) -> MutexMessage {
+        MutexMessage {
+            mutex: mutex,
+            sync: sync,
+        }
+    }
+}
+
 // Holds one midi universe of KeyState structs
 pub struct KeyStateStore {
     pub channels: [[KeyState; 127]; 16],
+    pub sync: Instant,
 }
 
 impl KeyStateStore {
     pub fn new() -> KeyStateStore {
         KeyStateStore {
             channels: [[KeyState::new(); 127]; 16],
+            sync: Instant::now(),
         }
     }
 
     pub fn key_state(&mut self, channel: u8, note: u8) -> &mut KeyState {
         &mut self.channels[channel as usize][note as usize]
+    }
+
+    pub fn set_sync(&mut self) {
+        self.sync = Instant::now()
     }
 }
